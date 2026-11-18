@@ -1,0 +1,15 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {champions} from '../data.mjs';import {createState,rank,calculate,validateBackup,validateStats,findStat} from '../engine.mjs';
+const make=()=>createState(champions);
+const record=(extra={})=>({champion:'Jinx',kind:'general',target:'',winRate:52,games:2000,source:'Fixture di test sintetica, non dati reali',patch:'TEST',updatedAt:'2026-01-01',elo:'TEST',region:'TEST',role:'BOTTOM',...extra});
+test('senza dati e draft non produce punteggi arbitrari',()=>assert.ok(rank(make()).every(r=>r.score===null)));
+test('esclude campioni selezionati e bannati',()=>{const s=make();s.draft.enemy[3]='Jinx';s.bans=['Jhin'];assert.ok(rank(s).every(r=>!['Jinx','Jhin'].includes(r.c.name)))});
+test('il proprio ADC resta confrontabile',()=>{const s=make();s.draft.ally[3]='Jinx';assert.ok(rank(s).some(r=>r.c.name==='Jinx'))});
+test('score e confidenza restano interi finiti',()=>{const s=make();s.draft.ally[4]='Lulu';s.draft.enemy[3]='Draven';s.stats=[record()];rank(s).forEach(r=>{if(r.score!==null)assert.ok(Number.isInteger(r.score)&&r.score>=0&&r.score<=100);assert.ok(Number.isInteger(r.confidence)&&r.confidence>=0&&r.confidence<=90)})});
+test('pochi campioni attenuano il WR',()=>{const s=make(),c=s.champions.find(c=>c.name==='Jinx');s.stats=[record({games:10,winRate:60})];const small=calculate(s,c).v.general;s.stats=[record({games:10000,winRate:60})];assert.ok(small<calculate(s,c).v.general)});
+test('esperienza personale influenza il ranking',()=>{const s=make();s.draft.enemy[3]='Draven';s.personal=[{id:'p1',champion:'Yunara',target:'Draven',kind:'adc',score:10,strengths:'',weaknesses:'',conditions:'',tips:'',notes:''}];s.weights={general:0,adc:0,enemySupport:0,synergy:0,ally:0,enemy:0,personal:15};assert.equal(rank(s)[0].c.name,'Yunara');assert.equal(rank(s)[0].score,100)});
+test('filtri patch elo regione',()=>{const s=make();s.stats=[record()];s.filters.patch='OTHER';assert.equal(findStat(s,'Jinx','general',''),undefined)});
+test('roundtrip backup v1',()=>{const s=make();assert.deepEqual(validateBackup(JSON.parse(JSON.stringify({version:1,state:s}))),s)});
+test('rifiuta duplicati draft',()=>{const s=make();s.draft.ally[0]='Jinx';s.draft.enemy[0]='Jinx';assert.throws(()=>validateBackup({version:1,state:s}))});
+test('rifiuta pesi tutti zero',()=>{const s=make();Object.keys(s.weights).forEach(k=>s.weights[k]=0);assert.throws(()=>validateBackup({version:1,state:s}))});
+test('rifiuta date impossibili e WR fuori intervallo',()=>{assert.throws(()=>validateStats([record({updatedAt:'2026-02-30'})],champions));assert.throws(()=>validateStats([record({winRate:101})],champions))});
+test('import statistiche non muta archivio personale',()=>{const s=make();s.personal=[{id:'sentinella'}];const before=JSON.stringify(s.personal);validateStats([record()],s.champions);assert.equal(JSON.stringify(s.personal),before)});
